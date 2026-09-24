@@ -483,7 +483,7 @@ Public Function APS_SalvarOperacaoComSetup(ByRef nv As tOperacao, ByVal ehNovo A
     If temSetup Then
         APS_GravarOp ops(idSetup)
     ElseIf removeuSetup Then
-        wsO.Range(wsO.Cells(ops(idSetup).linha, 1), wsO.Cells(ops(idSetup).linha, 10)).ClearContents
+        wsO.Range(wsO.Cells(ops(idSetup).linha, 1), wsO.Cells(ops(idSetup).linha, APS_ID_COL)).ClearContents
     End If
 
     If manual Then APS_MapaMarcar ops(k).id, ops(k).ini, ops(k).fim
@@ -536,7 +536,7 @@ Public Function APS_LimparSetupsOrfaos(ByRef ops() As tOperacao, ByVal n As Long
                         est = APS_Liberar(ws)
                         APS_Ocupado = APS_Ocupado + 1
                     End If
-                    ws.Range(ws.Cells(ops(i).linha, 1), ws.Cells(ops(i).linha, 10)).ClearContents
+                    ws.Range(ws.Cells(ops(i).linha, 1), ws.Cells(ops(i).linha, APS_ID_COL)).ClearContents
                     APS_LimparSetupsOrfaos = True
                 End If
             End If
@@ -1082,7 +1082,7 @@ Public Function APS_SincronizarSetups() As Boolean
         If Not ProximaAcao(ops, n, tipo, i, a, b, cod, rot, mins, chave, maq) Then Exit Do
 
         If tipo = "REMOVER" Then
-            ws.Range(ws.Cells(ops(i).linha, 1), ws.Cells(ops(i).linha, 10)).ClearContents
+            ws.Range(ws.Cells(ops(i).linha, 1), ws.Cells(ops(i).linha, APS_ID_COL)).ClearContents
         Else
             If tipo = "CRIAR" Then
                 ReDim Preserve ops(1 To n + 1)
