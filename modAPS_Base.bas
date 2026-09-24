@@ -690,7 +690,9 @@ Public Function APS_EhAutoCod(ByVal cod As String) As Boolean
 End Function
 
 Public Function APS_EhAuto(ByRef o As tOperacao) As Boolean
-    APS_EhAuto = APS_EhAutoCod(o.codigo)
+    ' Setup/Limpeza pode ser representado com os mesmos dados da operacao pai.
+    ' O marcador tecnico na Observacao identifica a linha automatica vinculada.
+    APS_EhAuto = APS_EhAutoCod(o.codigo) Or (Len(APS_IDDoSetup(o.obs)) > 0)
 End Function
 
 '----------------------------------------------------------
@@ -758,7 +760,7 @@ Public Function APS_AcharSetupDaProducao(ByRef ops() As tOperacao, ByVal n As Lo
 
     If Len(idProd) = 0 Then Exit Function
     For i = 1 To n
-        If APS_EhAutoCod(ops(i).codigo) Then
+        If APS_EhAuto(ops(i)) Then
             If APS_Ig(APS_IDDoSetup(ops(i).obs), idProd) Then
                 APS_AcharSetupDaProducao = i
                 Exit Function
@@ -1040,7 +1042,7 @@ Public Function APS_CodigoDoLote(ByRef ops() As tOperacao, _
 
         If APS_Ig(ops(i).lote, lote) And _
            Not APS_Ig(ops(i).id, excluirID) And _
-           Not APS_EhAutoCod(ops(i).codigo) Then
+           Not APS_EhAuto(ops(i)) Then
 
             APS_CodigoDoLote = ops(i).codigo
             Exit Function
@@ -1335,6 +1337,48 @@ Public Sub APS_CorrigirFormatoDados()
 Sai:
     On Error Resume Next
     If est Then APS_Reproteger ws, est
+End Sub
+
+'----------------------------------------------------------
+' Posiciona fisicamente o SETUP imediatamente antes da producao
+' a que ele pertence. A identidade permanece no ID da coluna K.
+' Move somente A:K para nao alterar outras estruturas da planilha.
+'----------------------------------------------------------
+Public Sub APS_PosicionarSetupAntesDaProducao(ByVal idSetup As String, ByVal idProd As String)
+    Dim ws As Worksheet
+    Dim ops() As tOperacao
+    Dim n As Long, i As Long
+    Dim linhaSetup As Long, linhaProd As Long, destino As Long
+    Dim src As Range
+
+    If Len(Trim$(idSetup)) = 0 Or Len(Trim$(idProd)) = 0 Then Exit Sub
+
+    Set ws = APS_Aba(APS_ABA_OPS)
+    If ws Is Nothing Then Exit Sub
+
+    n = APS_LerOps(ops)
+    If n <= 0 Then Exit Sub
+
+    For i = 1 To n
+        If APS_Ig(ops(i).id, idSetup) Then linhaSetup = ops(i).linha
+        If APS_Ig(ops(i).id, idProd) Then linhaProd = ops(i).linha
+    Next i
+
+    If linhaSetup < 2 Or linhaProd < 2 Then Exit Sub
+    If linhaSetup = linhaProd - 1 Then Exit Sub
+
+    If linhaSetup < linhaProd Then
+        destino = linhaProd - 2
+    Else
+        destino = linhaProd
+    End If
+
+    If destino < 2 Then destino = 2
+
+    Set src = ws.Range(ws.Cells(linhaSetup, 1), ws.Cells(linhaSetup, APS_ID_COL))
+    src.Cut
+    ws.Range(ws.Cells(destino, 1), ws.Cells(destino, APS_ID_COL)).Insert Shift:=xlDown
+    Application.CutCopyMode = False
 End Sub
 
 Public Sub APS_GravarHorario(ByRef o As tOperacao)
