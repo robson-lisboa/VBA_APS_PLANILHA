@@ -803,8 +803,8 @@ End Function
 
 '----------------------------------------------------------
 ' Leitura de 02_Operacoes
-' ID e OEE nao sao obrigatorios nem existem na planilha.
-' O ID tecnico e mantido internamente pela linha da operacao.
+' ID e OEE nao sao obrigatorios nem existem na estrutura A:J.
+' O ID tecnico persistente e armazenado na coluna K oculta.
 '----------------------------------------------------------
 Private Function APS_IDValido(ByVal v As Variant) As Boolean
     Dim s As String, n As Double
