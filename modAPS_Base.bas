@@ -20,11 +20,14 @@ Option Explicit
 ' 9  Quantidade de Caixas
 ' 10 Duracao
 '
-' ID, OEE e Velocidade-base NAO sao colunas da planilha.
+' ID interno tecnico ocupa a coluna K (oculta). OEE e Velocidade-base NAO sao colunas da planilha.
 '==========================================================
 
 Public Const APS_ABA_OPS As String = "02_Operacoes"
 Public Const APS_ABA_PLAN As String = "1_Planejamento"
+Public Const APS_ID_COL As Long = 11
+Public Const APS_ID_HEADER As String = "APS_ID_INTERNO"
+Public Const APS_ID_MIN As Long = 10001
 
 Public Const APS_TITULO As String = "APS Puran"
 Public Const APS_EPS As Double = 0.0000005
@@ -803,6 +806,28 @@ End Function
 ' ID e OEE nao sao obrigatorios nem existem na planilha.
 ' O ID tecnico e mantido internamente pela linha da operacao.
 '----------------------------------------------------------
+Private Function APS_IDValido(ByVal v As Variant) As Boolean
+    Dim s As String, n As Double
+    s = APS_Txt(v)
+    If Len(s) = 0 Then Exit Function
+    If s Like "*[!0-9]*" Then Exit Function
+    n = Val(s)
+    If n < APS_ID_MIN Or n <> Fix(n) Then Exit Function
+    APS_IDValido = True
+End Function
+
+Private Function APS_MaxIDExistente(ByVal ws As Worksheet) As Long
+    Dim ult As Long, r As Long, n As Long
+    ult = ws.Cells(ws.Rows.Count, APS_ID_COL).End(xlUp).Row
+    If ult < 2 Then Exit Function
+    For r = 2 To ult
+        If APS_IDValido(ws.Cells(r, APS_ID_COL).Value) Then
+            n = CLng(Val(APS_Txt(ws.Cells(r, APS_ID_COL).Value)))
+            If n > APS_MaxIDExistente Then APS_MaxIDExistente = n
+        End If
+    Next r
+End Function
+
 Public Function APS_LerOps(ByRef ops() As tOperacao) As Long
     Dim ws As Worksheet, r As Long, ult As Long, n As Long
     Dim cCod As Long, cPro As Long, cLot As Long, cMaq As Long
@@ -851,6 +876,8 @@ Public Function APS_LerOps(ByRef ops() As tOperacao) As Long
         Exit Function
     End If
 
+    APS_GarantirIDs
+
     ult = ws.Cells(ws.Rows.Count, cPro).End(xlUp).Row
 
     If ult < 2 Then Exit Function
@@ -876,7 +903,13 @@ Public Function APS_LerOps(ByRef ops() As tOperacao) As Long
                 With ops(n)
 
                     .linha = r
-                    .id = CStr(r)
+                    .id = APS_Txt(ws.Cells(r, APS_ID_COL).Value)
+
+                    If Not APS_IDValido(.id) Then
+                        APS_OpsIgnoradas = APS_OpsIgnoradas + 1
+                        n = n - 1
+                        GoTo ProximaLinha
+                    End If
 
                     .codigo = APS_Txt(ws.Cells(r, cCod).Value)
                     .Produto = APS_Txt(ws.Cells(r, cPro).Value)
@@ -1016,38 +1049,98 @@ Public Function APS_CodigoDoLote(ByRef ops() As tOperacao, _
 End Function
 
 '----------------------------------------------------------
-' ID tecnico interno
+' ID tecnico interno persistente
 '----------------------------------------------------------
 Public Function APS_ProximoID() As String
     Dim ws As Worksheet
-    Dim cPro As Long, ult As Long
+    Dim atual As Long, maxExistente As Long
+    Dim s As String
+
+    s = APS_CfgLer("ID_CONTADOR", CStr(APS_ID_MIN - 1))
+    If Not IsNumeric(s) Then
+        atual = APS_ID_MIN - 1
+    Else
+        atual = CLng(Val(s))
+        If atual < APS_ID_MIN - 1 Then atual = APS_ID_MIN - 1
+    End If
 
     Set ws = APS_Aba(APS_ABA_OPS)
-
-    If ws Is Nothing Then
-        APS_ProximoID = "10001"
-        Exit Function
+    If Not ws Is Nothing Then
+        maxExistente = APS_MaxIDExistente(ws)
+        If maxExistente > atual Then atual = maxExistente
     End If
 
-    cPro = APS_Col(ws, H_PRO())
-
-    If cPro = 0 Then
-        APS_ProximoID = "10001"
-        Exit Function
-    End If
-
-    ult = ws.Cells(ws.Rows.Count, cPro).End(xlUp).Row
-
-    If ult < 2 Then
-        APS_ProximoID = "10001"
-    Else
-        APS_ProximoID = CStr(10000 + ult)
-    End If
+    atual = atual + 1
+    APS_CfgGravar "ID_CONTADOR", CStr(atual)
+    APS_ProximoID = CStr(atual)
 End Function
 
 Public Sub APS_GarantirIDs()
-    ' ID e interno e baseado na linha da operacao.
-    ' Nenhuma coluna e criada ou alterada.
+    Dim ws As Worksheet, est As Boolean
+    Dim ult As Long, r As Long, c As Long
+    Dim temDados As Boolean, id As String, novo As String
+    Dim usados As Object
+    Dim maxExistente As Long, contador As Long
+
+    On Error GoTo Sai
+
+    Set ws = APS_Aba(APS_ABA_OPS)
+    If ws Is Nothing Then Exit Sub
+
+    Set usados = CreateObject("Scripting.Dictionary")
+    usados.CompareMode = vbTextCompare
+
+    ult = ws.UsedRange.Row + ws.UsedRange.Rows.Count - 1
+    If ult < 2 Then ult = 2
+    If ws.Cells(ws.Rows.Count, APS_ID_COL).End(xlUp).Row > ult Then ult = ws.Cells(ws.Rows.Count, APS_ID_COL).End(xlUp).Row
+
+    est = APS_Liberar(ws)
+    APS_Ocupado = APS_Ocupado + 1
+
+    ws.Cells(1, APS_ID_COL).Value = APS_ID_HEADER
+    ws.Columns(APS_ID_COL).Hidden = True
+
+    maxExistente = APS_MaxIDExistente(ws)
+    contador = CLng(Val(APS_CfgLer("ID_CONTADOR", CStr(APS_ID_MIN - 1))))
+    If contador < APS_ID_MIN - 1 Then contador = APS_ID_MIN - 1
+    If maxExistente > contador Then contador = maxExistente
+    APS_CfgGravar "ID_CONTADOR", CStr(contador)
+
+    For r = 2 To ult
+        temDados = False
+        For c = 1 To 10
+            If Len(APS_Txt(ws.Cells(r, c).Value)) > 0 Then
+                temDados = True
+                Exit For
+            End If
+        Next c
+
+        If Not temDados Then
+            ws.Cells(r, APS_ID_COL).ClearContents
+        Else
+            id = APS_Txt(ws.Cells(r, APS_ID_COL).Value)
+            If APS_IDValido(id) And Not usados.Exists(id) Then
+                usados.Add id, True
+            Else
+                novo = APS_ProximoID()
+                Do While usados.Exists(novo)
+                    novo = APS_ProximoID()
+                Loop
+                ws.Cells(r, APS_ID_COL).NumberFormat = "@"
+                ws.Cells(r, APS_ID_COL).Value = novo
+                usados.Add novo, True
+            End If
+        End If
+    Next r
+
+    APS_Ocupado = APS_Ocupado - 1
+    APS_Reproteger ws, est
+    Exit Sub
+
+Sai:
+    On Error Resume Next
+    If APS_Ocupado > 0 Then APS_Ocupado = APS_Ocupado - 1
+    If Not ws Is Nothing Then APS_Reproteger ws, est
 End Sub
 
 '----------------------------------------------------------
@@ -1083,6 +1176,10 @@ Public Sub APS_GravarOp(ByRef o As tOperacao)
 
         r = o.linha
 
+        If APS_IDValido(ws.Cells(r, APS_ID_COL).Value) Then
+            o.id = APS_Txt(ws.Cells(r, APS_ID_COL).Value)
+        End If
+
     Else
 
         r = APS_LinhaLivre(ws, cCod, cPro, cLot)
@@ -1091,7 +1188,9 @@ Public Sub APS_GravarOp(ByRef o As tOperacao)
 
     End If
 
-    o.id = CStr(r)
+    If Not APS_IDValido(o.id) Then
+        o.id = APS_ProximoID()
+    End If
 
     ' cabecalho azul, dados normais: a linha de dados recebe formato proprio
     APS_FormatarLinhaDados ws, r
@@ -1126,6 +1225,10 @@ Public Sub APS_GravarOp(ByRef o As tOperacao)
     Else
         ws.Cells(r, cQtd).ClearContents
     End If
+
+    ws.Cells(r, APS_ID_COL).NumberFormat = "@"
+    ws.Cells(r, APS_ID_COL).Value = o.id
+    ws.Columns(APS_ID_COL).Hidden = True
 
     ws.Cells(r, cDur).NumberFormat = "[h]:mm"
 
@@ -1326,8 +1429,8 @@ Public Function APS_ExcluirOperacao(ByVal id As String) As Boolean
     ' os IDs tecnicos das demais operacoes.
     APS_Ocupado = APS_Ocupado + 1
     ' remove primeiro o SETUP vinculado (se houver), para nao deixar registro orfao
-    If linhaSetup > 0 Then ws.Range(ws.Cells(linhaSetup, 1), ws.Cells(linhaSetup, 10)).ClearContents
-    ws.Range(ws.Cells(linha, 1), ws.Cells(linha, 10)).ClearContents
+    If linhaSetup > 0 Then ws.Range(ws.Cells(linhaSetup, 1), ws.Cells(linhaSetup, APS_ID_COL)).ClearContents
+    ws.Range(ws.Cells(linha, 1), ws.Cells(linha, APS_ID_COL)).ClearContents
     APS_Ocupado = APS_Ocupado - 1
 
     APS_Reproteger ws, est
@@ -1526,7 +1629,7 @@ Private Function LerLegado(ByVal ws As Worksheet, _
                     End If
 
                     If Len(.id) = 0 Then
-                        .id = CStr(r)
+                        .id = ""
                     End If
 
                     .Produto = APS_Txt(ws.Cells(r, cPro).Value)
@@ -1650,6 +1753,8 @@ Public Sub APS_Preparar()
         Application.ScreenUpdating = True
         Exit Sub
     End If
+
+    APS_GarantirIDs
 
     estO = APS_Liberar(wsO)
     estP = APS_Liberar(wsP)
