@@ -292,7 +292,7 @@ Public Function APS_SalvarOperacao(ByRef nv As tOperacao, ByVal ehNovo As Boolea
             If mudou(i) Then APS_GravarHorario ops(i)
         End If
     Next i
-    If manual Then APS_MapaMarcar ops(k).linha, ops(k).ini, ops(k).fim
+    If manual Then APS_MapaMarcar ops(k).id, ops(k).ini, ops(k).fim
     APS_Ocupado = APS_Ocupado - 1
     trav = False
     APS_Reproteger wsO, estO
@@ -486,7 +486,7 @@ Public Function APS_SalvarOperacaoComSetup(ByRef nv As tOperacao, ByVal ehNovo A
         wsO.Range(wsO.Cells(ops(idSetup).linha, 1), wsO.Cells(ops(idSetup).linha, 10)).ClearContents
     End If
 
-    If manual Then APS_MapaMarcar ops(k).linha, ops(k).ini, ops(k).fim
+    If manual Then APS_MapaMarcar ops(k).id, ops(k).ini, ops(k).fim
 
     APS_Ocupado = APS_Ocupado - 1
     trav = False
@@ -800,27 +800,29 @@ Private Function StatusAutomatico(ByVal st As String) As Boolean
                        APS_Ig(st, APS_ST_CONCLUIDA()) Or APS_Ig(st, APS_ST_CONFLITO)
 End Function
 
-' Memoria do ultimo estado automatico avaliado: linha|codigo|inicio(min)|fim(min);...
-Private Function MapaLer(ByRef rw() As Long, ByRef cd() As String, ByRef mi() As Double, ByRef mf() As Double) As Long
+' Memoria do ultimo estado automatico avaliado: ID interno|codigo|inicio(min)|fim(min);...
+Private Function MapaLer(ByRef ids() As String, ByRef cd() As String, ByRef mi() As Double, ByRef mf() As Double) As Long
     Dim s As String, it() As String, p() As String, i As Long, n As Long
 
-    ReDim rw(1 To 1): ReDim cd(1 To 1): ReDim mi(1 To 1): ReDim mf(1 To 1)
+    ReDim ids(1 To 1): ReDim cd(1 To 1): ReDim mi(1 To 1): ReDim mf(1 To 1)
     s = APS_CfgLer("STAUTO", "")
     If Len(s) = 0 Then Exit Function
 
     it = Split(s, ";")
-    ReDim rw(1 To UBound(it) + 1): ReDim cd(1 To UBound(it) + 1)
+    ReDim ids(1 To UBound(it) + 1): ReDim cd(1 To UBound(it) + 1)
     ReDim mi(1 To UBound(it) + 1): ReDim mf(1 To UBound(it) + 1)
+
     For i = 0 To UBound(it)
         p = Split(it(i), "|")
         If UBound(p) = 3 Then
             n = n + 1
-            rw(n) = CLng(Val(p(0)))
+            ids(n) = p(0)
             cd(n) = p(1)
             mi(n) = Val(p(2))
             mf(n) = Val(p(3))
         End If
     Next i
+
     MapaLer = n
 End Function
 
@@ -829,16 +831,19 @@ Private Sub MapaGravar(ByVal s As String)
 End Sub
 
 Private Function EstadoMudou(ByRef o As tOperacao, ByVal au As String, ByVal nm As Long, _
-                             ByRef rw() As Long, ByRef cd() As String, _
+                             ByRef ids() As String, ByRef cd() As String, _
                              ByRef mi() As Double, ByRef mf() As Double) As Boolean
     Dim j As Long
 
     EstadoMudou = True
+
     For j = 1 To nm
-        If rw(j) = o.linha Then
+        If APS_Ig(ids(j), o.id) Then
             If cd(j) = CodStatus(au) Then
                 If Abs(mi(j) - Round(o.ini * 1440#, 0)) < 0.5 Then
-                    If Abs(mf(j) - Round(o.fim * 1440#, 0)) < 0.5 Then EstadoMudou = False
+                    If Abs(mf(j) - Round(o.fim * 1440#, 0)) < 0.5 Then
+                        EstadoMudou = False
+                    End If
                 End If
             End If
             Exit Function
@@ -846,23 +851,26 @@ Private Function EstadoMudou(ByRef o As tOperacao, ByVal au As String, ByVal nm 
     Next j
 End Function
 
-' Grava o status automatico onde o horario/estado mudou e renova a memoria (poda linhas que nao existem mais).
-' Retorna quantos status foram alterados.
 Public Function APS_AplicarStatusAuto(ByRef ops() As tOperacao, ByVal n As Long) As Long
-    Dim rw() As Long, cd() As String, mi() As Double, mf() As Double, nm As Long
+    Dim ids() As String, cd() As String, mi() As Double, mf() As Double, nm As Long
     Dim i As Long, agora As Double, au As String, alvo As String, s As String, semBase As Boolean
 
     agora = CDbl(Now)
-    nm = MapaLer(rw, cd, mi, mf)
-    ' Primeira execucao (sem memoria): so registra o estado atual, NAO altera nenhum status existente.
+    nm = MapaLer(ids, cd, mi, mf)
     semBase = (nm = 0 And Not mForcarStatus)
 
     For i = 1 To n
         au = APS_StatusPorHorario(ops(i).ini, ops(i).fim, agora)
-        If EstadoMudou(ops(i), au, nm, rw, cd, mi, mf) And Not semBase Then
+
+        If EstadoMudou(ops(i), au, nm, ids, cd, mi, mf) And Not semBase Then
             If StatusAutomatico(ops(i).status) Then
                 alvo = au
-                If APS_Ig(ops(i).status, APS_ST_CONFLITO) And APS_Ig(au, APS_ST_PLANEJADA) Then alvo = ops(i).status
+
+                If APS_Ig(ops(i).status, APS_ST_CONFLITO) And _
+                   APS_Ig(au, APS_ST_PLANEJADA) Then
+                    alvo = ops(i).status
+                End If
+
                 If Not APS_Ig(alvo, ops(i).status) Then
                     APS_GravarStatus ops(i).linha, alvo
                     ops(i).status = alvo
@@ -870,7 +878,9 @@ Public Function APS_AplicarStatusAuto(ByRef ops() As tOperacao, ByVal n As Long)
                 End If
             End If
         End If
-        s = s & ops(i).linha & "|" & CodStatus(au) & "|" & Format$(Round(ops(i).ini * 1440#, 0), "0") & "|" & _
+
+        s = s & ops(i).id & "|" & CodStatus(au) & "|" & _
+            Format$(Round(ops(i).ini * 1440#, 0), "0") & "|" & _
             Format$(Round(ops(i).fim * 1440#, 0), "0") & ";"
     Next i
 
@@ -878,20 +888,23 @@ Public Function APS_AplicarStatusAuto(ByRef ops() As tOperacao, ByVal n As Long)
     MapaGravar s
 End Function
 
-' Ha status automatico a aplicar?
 Private Function StatusPendente(ByRef ops() As tOperacao, ByVal n As Long) As Boolean
-    Dim rw() As Long, cd() As String, mi() As Double, mf() As Double, nm As Long
+    Dim ids() As String, cd() As String, mi() As Double, mf() As Double, nm As Long
     Dim i As Long, au As String, agora As Double
 
     agora = CDbl(Now)
-    nm = MapaLer(rw, cd, mi, mf)
+    nm = MapaLer(ids, cd, mi, mf)
+
     If nm = 0 Then Exit Function
+
     For i = 1 To n
         au = APS_StatusPorHorario(ops(i).ini, ops(i).fim, agora)
-        If EstadoMudou(ops(i), au, nm, rw, cd, mi, mf) Then
+
+        If EstadoMudou(ops(i), au, nm, ids, cd, mi, mf) Then
             If StatusAutomatico(ops(i).status) Then
                 If Not APS_Ig(au, ops(i).status) Then
-                    If Not (APS_Ig(ops(i).status, APS_ST_CONFLITO) And APS_Ig(au, APS_ST_PLANEJADA)) Then
+                    If Not (APS_Ig(ops(i).status, APS_ST_CONFLITO) And _
+                            APS_Ig(au, APS_ST_PLANEJADA)) Then
                         StatusPendente = True
                         Exit Function
                     End If
@@ -901,18 +914,23 @@ Private Function StatusPendente(ByRef ops() As tOperacao, ByVal n As Long) As Bo
     Next i
 End Function
 
-' O usuario escolheu o status a mao: o automatico nao sobrescreve ate o horario mudar
-Public Sub APS_MapaMarcar(ByVal linha As Long, ByVal ini As Double, ByVal fim As Double)
-    Dim rw() As Long, cd() As String, mi() As Double, mf() As Double, nm As Long, i As Long, s As String
+Public Sub APS_MapaMarcar(ByVal id As String, ByVal ini As Double, ByVal fim As Double)
+    Dim ids() As String, cd() As String, mi() As Double, mf() As Double
+    Dim nm As Long, i As Long, s As String
 
-    nm = MapaLer(rw, cd, mi, mf)
+    nm = MapaLer(ids, cd, mi, mf)
+
     For i = 1 To nm
-        If rw(i) <> linha Then
-            s = s & rw(i) & "|" & cd(i) & "|" & Format$(mi(i), "0") & "|" & Format$(mf(i), "0") & ";"
+        If Not APS_Ig(ids(i), id) Then
+            s = s & ids(i) & "|" & cd(i) & "|" & _
+                Format$(mi(i), "0") & "|" & Format$(mf(i), "0") & ";"
         End If
     Next i
-    s = s & linha & "|" & CodStatus(APS_StatusPorHorario(ini, fim, CDbl(Now))) & "|" & _
-        Format$(Round(ini * 1440#, 0), "0") & "|" & Format$(Round(fim * 1440#, 0), "0")
+
+    s = s & id & "|" & CodStatus(APS_StatusPorHorario(ini, fim, CDbl(Now))) & "|" & _
+        Format$(Round(ini * 1440#, 0), "0") & "|" & _
+        Format$(Round(fim * 1440#, 0), "0")
+
     MapaGravar s
 End Sub
 
@@ -1170,7 +1188,7 @@ Private Sub MarcarStatusLinha(ByVal linha As Long)
     n = APS_LerOps(ops)
     For i = 1 To n
         If ops(i).linha = linha Then
-            APS_MapaMarcar linha, ops(i).ini, ops(i).fim
+            APS_MapaMarcar ops(i).id, ops(i).ini, ops(i).fim
             Exit For
         End If
     Next i
