@@ -425,9 +425,12 @@ Public Function APS_SalvarOperacaoComSetup(ByRef nv As tOperacao, ByVal ehNovo A
         If novoSetup Then n = n + 1: idSetup = n: ops(idSetup).linha = 0: ops(idSetup).id = ""
 
         With ops(idSetup)
-            .codigo = APS_COD_SETUP
-            .Produto = setupRotulo
-            .lote = "SETUP:" & ops(k).id
+            ' O SETUP representa o periodo de preparacao da propria OP.
+            ' A:J herda os dados da producao pai; o marcador tecnico
+            ' identifica a linha automatica sem criar outra OP/produto.
+            .codigo = ops(k).codigo
+            .Produto = ops(k).Produto
+            .lote = ops(k).lote
             .maquina = ops(k).maquina
             .ini = setupIni
             .dur = APS_ArredMin(setupMin / 1440#)
@@ -482,6 +485,9 @@ Public Function APS_SalvarOperacaoComSetup(ByRef nv As tOperacao, ByVal ehNovo A
 
     If temSetup Then
         APS_GravarOp ops(idSetup)
+        ' Move o SETUP para imediatamente antes da producao depois de todas
+        ' as gravacoes da cascata, preservando os IDs tecnicos.
+        APS_PosicionarSetupAntesDaProducao ops(idSetup).id, ops(k).id
     ElseIf removeuSetup Then
         wsO.Range(wsO.Cells(ops(idSetup).linha, 1), wsO.Cells(ops(idSetup).linha, APS_ID_COL)).ClearContents
     End If
@@ -520,7 +526,7 @@ Public Function APS_LimparSetupsOrfaos(ByRef ops() As tOperacao, ByVal n As Long
     Dim i As Long, j As Long, idProd As String, achou As Boolean, ws As Worksheet, est As Boolean
 
     For i = 1 To n
-        If APS_EhAutoCod(ops(i).codigo) Then
+        If APS_EhAuto(ops(i)) Then
             idProd = APS_IDDoSetup(ops(i).obs)
             If Len(idProd) > 0 Then
                 achou = False
@@ -1089,12 +1095,14 @@ Public Function APS_SincronizarSetups() As Boolean
                 k = n + 1
                 ops(k).linha = 0
                 ops(k).id = ""
-                ops(k).codigo = cod
-                ops(k).Produto = rot
-                ops(k).lote = chave
-                ops(k).maquina = maq
+                ' A linha automatica herda A:J da producao que vem depois.
+                ' O marcador tecnico vincula o Setup ao ID interno dessa producao.
+                ops(k).codigo = ops(b).codigo
+                ops(k).Produto = ops(b).Produto
+                ops(k).lote = ops(b).lote
+                ops(k).maquina = ops(b).maquina
                 ops(k).status = APS_ST_PLANEJADA
-                ops(k).obs = "Autom" & ChrW(225) & "tico (par" & ChrW(226) & "metro de Setup/Limpeza)"
+                ops(k).obs = APS_MarcadorSetup(ops(b).id) & " Autom" & ChrW(225) & "tico (" & rot & ")"
                 ops(k).caixas = 0
                 ops(k).dur = APS_ArredMin(mins / 1440#)
                 ops(k).ini = ops(a).fim
@@ -1103,11 +1111,15 @@ Public Function APS_SincronizarSetups() As Boolean
                 n = k
             Else
                 k = i
-                If (Not APS_Ig(ops(k).Produto, rot)) Or (Not APS_Ig(ops(k).codigo, cod)) Then
-                    ops(k).Produto = rot
-                    ops(k).codigo = cod
+                If (Not APS_Ig(ops(k).Produto, ops(b).Produto)) Or (Not APS_Ig(ops(k).codigo, ops(b).codigo)) Or _
+                   (Not APS_Ig(ops(k).lote, ops(b).lote)) Then
+                    ops(k).Produto = ops(b).Produto
+                    ops(k).codigo = ops(b).codigo
+                    ops(k).lote = ops(b).lote
+                    ops(k).maquina = ops(b).maquina
                     ops(k).dur = APS_ArredMin(mins / 1440#)
                 End If
+                ops(k).obs = APS_MarcadorSetup(ops(b).id) & " Autom" & ChrW(225) & "tico (" & rot & ")"
                 If ops(k).ini < ops(a).fim - APS_EPS Or ops(k).ini >= ops(b).ini - APS_EPS Then
                     ops(k).ini = ops(a).fim
                 End If
@@ -1124,6 +1136,9 @@ Public Function APS_SincronizarSetups() As Boolean
                     If mudou(j) Then APS_GravarHorario ops(j)
                 End If
             Next j
+            If APS_EhAuto(ops(k)) Then
+                APS_PosicionarSetupAntesDaProducao ops(k).id, APS_IDDoSetup(ops(k).obs)
+            End If
         End If
         APS_SincronizarSetups = True
     Loop While guarda < 400
